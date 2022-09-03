@@ -1,4 +1,4 @@
-#include <glad/gl.h>
+#include <glad/glad.h> // previously gl.h
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <fstream>
 #include <sstream>
+#include <iostream>
 
 static const struct
 {
@@ -20,15 +21,37 @@ static const struct
     {   0.f,  0.6f, 0.f, 0.f, 1.f }
 };
 
-char* loadShader(const char* fileName)
+static const int MAX_ERR_LENGTH = 1024;
+
+bool installShader(int program, GLenum shaderType, const char* fileName)
 {
-    std::ifstream t(fileName);
-    std::stringstream buffer;
-    buffer << t.rdbuf();
-    std::string contents = buffer.str();
-    char* shader = new char[contents.size() + 1];
-    strncpy_s(shader, contents.size() + 1, contents.c_str(), contents.size());
-    return shader;
+    GLuint shader = glCreateShader(shaderType);
+    {
+        std::ifstream t(fileName);
+        std::stringstream buffer;
+        buffer << t.rdbuf();
+        std::string contents = buffer.str();
+        char* text = new char[contents.size() + 1];
+        strncpy_s(text, contents.size() + 1, contents.c_str(), contents.size());
+        glShaderSource(shader, 1, &text, NULL);
+        delete[] text;
+    }
+    glCompileShader(shader);
+    // Verify that compilation was successful
+    GLint isCompiled = 0;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &isCompiled);
+    if (isCompiled == GL_FALSE)
+    {
+        GLchar errLog[MAX_ERR_LENGTH] = { 0 };
+        glGetShaderInfoLog(shader, MAX_ERR_LENGTH, NULL, errLog);
+        std::cerr << "Error compiling shader (" << fileName << "): " << errLog << std::endl;
+        return false;
+    }
+
+    // Now we will attach the shader and dispose of it
+    glAttachShader(program, shader);
+    glDeleteShader(shader);
+    return true;
 }
 
 static void error_callback(int error, const char* description)
@@ -44,19 +67,16 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
 
 int main(void)
 {
-    GLFWwindow* window;
-    GLuint vertex_buffer, vertex_shader, fragment_shader, program;
-    GLint mvp_location, vpos_location, vcol_location;
+    GLuint vertex_buffer, vertex_shader, fragment_shader;
 
     glfwSetErrorCallback(error_callback);
-
     if (!glfwInit())
         exit(EXIT_FAILURE);
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 
-    window = glfwCreateWindow(640, 480, "Simple example", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(640, 480, "Simple example", NULL, NULL);
     if (!window)
     {
         glfwTerminate();
@@ -66,7 +86,7 @@ int main(void)
     glfwSetKeyCallback(window, key_callback);
 
     glfwMakeContextCurrent(window);
-    gladLoadGL(glfwGetProcAddress);
+    gladLoadGL(); // previously had glfwGetProcAddress as arg
     glfwSwapInterval(1);
 
     // NOTE: OpenGL error checks have been omitted for brevity
@@ -75,34 +95,26 @@ int main(void)
     glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 
-    vertex_shader = glCreateShader(GL_VERTEX_SHADER);
-    {
-        const char* vert_text = loadShader("vertex.glsl");
-        glShaderSource(vertex_shader, 1, &vert_text, NULL);
-        delete vert_text;
-    }
-    glCompileShader(vertex_shader);
+    GLuint program = glCreateProgram();
+    if (!installShader(program, GL_VERTEX_SHADER, "vertex.glsl") ||
+        !installShader(program, GL_FRAGMENT_SHADER, "frag.glsl"))
+        return -1;
 
-    fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
-    {
-        const char* frag_text = loadShader("frag.glsl");
-        glShaderSource(fragment_shader, 1, &frag_text, NULL);
-        delete frag_text;
-    }
-    glCompileShader(fragment_shader);
-
-    program = glCreateProgram();
-    glAttachShader(program, vertex_shader);
-    // Delete shaders right after attaching to clean up
-    glDeleteShader(vertex_shader);
-    glAttachShader(program, fragment_shader);
-    glDeleteShader(fragment_shader);
     glLinkProgram(program);
-    glUseProgram(program); // apply the program to the OpenGL state
+    // Check for any errors:
+    GLint success = GL_FALSE;
+    glGetProgramiv(program, GL_LINK_STATUS, &success);
+    if (success == GL_FALSE) {
+        GLchar errLog[MAX_ERR_LENGTH] = { 0 };
+        glGetProgramInfoLog(program, MAX_ERR_LENGTH, NULL, errLog);
+        std::cerr << "Error linking program: " << errLog << std::endl;
+        return -1;
+    }
+    glUseProgram(program); // apply the program to the OpenGL state 
 
-    mvp_location = glGetUniformLocation(program, "MVP");
-    vpos_location = glGetAttribLocation(program, "vPos");
-    vcol_location = glGetAttribLocation(program, "vCol");
+    GLint mvp_location = glGetUniformLocation(program, "MVP");
+    GLint vpos_location = glGetAttribLocation(program, "vPos");
+    GLint vcol_location = glGetAttribLocation(program, "vCol");
 
     glEnableVertexAttribArray(vpos_location);
     glVertexAttribPointer(vpos_location, 2, GL_FLOAT, GL_FALSE,
